@@ -1,0 +1,207 @@
+function Get-ClusterResourceInfo
+        <#
+        .SYNOPSIS
+            Generates a report of the status of cluster resources.
+ 
+        .DESCRIPTION
+            Generates a report of the status of cluster resources with the timestamp of the last time each resource came online, offline, or became degraded.
+            The report can be sent as an e-mail or exported to a CSV file.
+             
+        .PARAMETER Cluster
+            Name of the cluster to query
+
+        .PARAMETER Passthru
+            Returns the report as an object
+
+        .PARAMETER Detailed
+            Expands Resource Groups adding details about resources
+
+        .EXAMPLE
+            Get-ClusterResourceInfo -Cluster clustername -Passthru
+
+        .EXAMPLE
+            Get-ClusterResourceInfo -Cluster clustername -Passthru -Detailed
+
+        .EXAMPLE
+            Get-ClusterResourceInfo -Cluster clustername -Passthru -Detailed -Verbose
+
+        .EXAMPLE
+            Get-ClusterResourceInfo -Cluster clustername -Passthru | Format-table -AutoSize
+
+        .EXAMPLE
+            Get-ClusterResourceInfo -Cluster clustername -Passthru | Sort-Object ClusterName | Format-Table -Property ResourceGroup, LastOnline
+
+        .EXAMPLE
+            'clu1','clu2' | % { Get-ClusterResourceInfo -Cluster $_ -Passthru -Detailed -Verbose } #| Format-Table * -AutoSize
+
+        .AUTHOR
+            happysysadm.com
+
+        #>
+    {
+    [CmdletBinding(DefaultParameterSetName='__AllParameterSets')]
+    param(
+
+        [Parameter(Mandatory)][ValidateScript({Get-Cluster $_})][string]$Cluster,
+
+        [switch]$Detailed = $False,
+        
+        [switch]$Passthru = $True
+
+        )
+    
+    write-verbose 'Started'
+    
+    if($Detailed) { Write-Verbose 'Detailed mode is ON' } else { Write-Verbose 'Detailed mode is OFF' }
+
+    Write-Verbose 'Retrieving cluster information'
+
+    $Error = $False
+
+    $info = @()
+
+    $infolastonline = @()
+
+    $infolastoffline = @()
+
+    $infolasterror = @()
+
+    $infolastdegraded = @()
+    
+    try
+    
+        {
+
+         $clu = Get-cluster $cluster
+
+         $nodes = $clu | Get-ClusterNode
+
+         #Event ID 1201 is the cluster group coming online. Retrieving them all.
+         $eventson = foreach($node in $nodes){Get-WinEvent -ComputerName $node -FilterHashtable @{LogName='Microsoft-Windows-FailoverClustering/Operational';ID = 1201}}
+         $eventson = $eventson | sort timecreated -Descending
+
+         #Event ID 1204 is the cluster group going offline. Retrieving them all.
+         $eventsoff = foreach($node in $nodes){Get-WinEvent -ComputerName $node -FilterHashtable @{LogName='Microsoft-Windows-FailoverClustering/Operational';ID = 1204}}
+         $eventsoff = $eventsoff | sort timecreated -Descending
+         
+         #Event ID 1609 is for resource failures. Retrieving them all.
+         $eventserror = foreach($node in $nodes){Get-WinEvent -ComputerName $node -FilterHashtable @{LogName='System';ID = 1069}}
+         $eventsoerror = $eventserror | sort timecreated -Descending
+         
+         #Event ID 1167 is for resource group becoming degraded. Retrieving them all.
+         $eventsdegraded = foreach($node in $nodes){Get-WinEvent -ComputerName $node -FilterHashtable @{LogName='System';ID = 1167}}
+         $eventsdegraded = $eventsdegraded | sort timecreated -Descending
+
+         $clustergroups = $clu | Get-ClusterGroup
+    
+         foreach($clustergroup in $clustergroups) {
+
+                Write-Verbose "`tWorking on $($clu.name) - $($clu | Get-ClusterNode) - $($clustergroup.Name)"
+
+                #Selecting only the events 1201 for the current resource group
+                $infolastonline += ($eventson | ? {$_.message -match $clustergroup.name}).TimeCreated
+
+                #Selecting only the events 1204 for the current resource group
+                $infolastoffline += ($eventsoff | ? {$_.message -match $clustergroup.name}).TimeCreated
+
+                #Selecting all events regarding resource failures for the current resource group
+                $infolasterror = ($eventserror | ? {$_.message -match $clustergroup.name}).TimeCreated
+
+                #Selecting all events regarding current resource group becoming degraded
+                $infolastdegraded = ($eventsdegraded | ? {$_.message -match $clustergroup.name}).TimeCreated
+
+                if($detailed) {
+                
+                    #More detailed: retrieving all the resources inside the current resource group
+                    $resources = $clustergroup | Get-ClusterResource
+
+                    foreach($resource in $resources) {
+                
+                        $infores = [PSCustomObject]@{
+                            ClusterType = 'MSCS'
+                            ClusterName = $clu.Name
+                            ResourceGroup = $resource.OwnerGroup
+                            Resource = $resource.Name
+                            ServerName = $resource.OwnerNode
+                            ResourceStatus = $resource.State
+                            LastOnline = if($infolastonline){$infolastonline[0]}else{'NA'}
+                            LastOffline = if($infolastoffline){$infolastoffline[0]}else{'NA'}
+                            LastError = if($infolasterror){$infolasterror[0]}else{'NA'}}
+
+                        $info += $infores
+
+                        }
+
+                    }
+                    
+                else {
+
+                    #Less detailed: only resource groups report.
+                    
+                    $inforesgroup = [PSCustomObject]@{
+                            ClusterType = 'MSCS'
+                            ClusterName = $clu.Name
+                            ResourceGroup = $clustergroup.Name
+                            ServerName = $clustergroup.OwnerNode
+                            ResourceStatus = $clustergroup.State
+                            LastOnline = if($infolastonline){$infolastonline[0]}else{'NA'}
+                            LastOffline = if($infolastoffline){$infolastoffline[0]}else{'NA'}
+                            LastDegraded = if($infolastdegraded){$infolastdegraded[0]}else{'NA'}}
+
+                    $info += $inforesgroup
+
+                    }
+                
+                $infolastonline = $null
+
+                $infolastoffline = $null
+                
+                $infolasterror = $null
+
+                $infolastdegraded = $null
+
+                }
+            
+         }
+
+    catch
+        
+        { 
+            
+        $Error = $True
+            
+        Write-Warning $_.Exception.Message 
+
+        $info = $null
+            
+        }
+
+    if($Error)
+
+        {
+
+        Write-Warning "Script aborted. No information returned on $clu.name"
+
+        }
+
+    elseif($Passthru) 
+       
+        {
+        
+        Write-Verbose 'Returning object for further filtering.'
+        
+        $info
+        
+        }
+
+    else
+
+        {
+
+        Write-Verbose "No passthru"
+
+        }
+    
+    write-verbose 'Finished'
+    
+    }
