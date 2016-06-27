@@ -77,19 +77,19 @@ function Get-ClusterResourceInfo
          $nodes = $clu | Get-ClusterNode
 
          #Event ID 1201 is the cluster group coming online. Retrieving them all.
-         $eventson = foreach($node in $nodes){Get-WinEvent -ComputerName $node -FilterHashtable @{LogName='Microsoft-Windows-FailoverClustering/Operational';ID = 1201}}
+         $eventson = foreach($node in $nodes){Get-WinEvent -ComputerName $node -FilterHashtable @{LogName='Microsoft-Windows-FailoverClustering/Operational';ID = 1201} -ErrorAction SilentlyContinue}
          $eventson = $eventson | sort timecreated -Descending
 
          #Event ID 1204 is the cluster group going offline. Retrieving them all.
-         $eventsoff = foreach($node in $nodes){Get-WinEvent -ComputerName $node -FilterHashtable @{LogName='Microsoft-Windows-FailoverClustering/Operational';ID = 1204}}
+         $eventsoff = foreach($node in $nodes){Get-WinEvent -ComputerName $node -FilterHashtable @{LogName='Microsoft-Windows-FailoverClustering/Operational';ID = 1204} -ErrorAction SilentlyContinue}
          $eventsoff = $eventsoff | sort timecreated -Descending
          
          #Event ID 1609 is for resource failures. Retrieving them all.
-         $eventserror = foreach($node in $nodes){Get-WinEvent -ComputerName $node -FilterHashtable @{LogName='System';ID = 1069}}
+         $eventserror = foreach($node in $nodes){Get-WinEvent -ComputerName $node -FilterHashtable @{LogName='System';ID = 1069} -ErrorAction SilentlyContinue}
          $eventsoerror = $eventserror | sort timecreated -Descending
          
          #Event ID 1167 is for resource group becoming degraded. Retrieving them all.
-         $eventsdegraded = foreach($node in $nodes){Get-WinEvent -ComputerName $node -FilterHashtable @{LogName='System';ID = 1167}}
+         $eventsdegraded = foreach($node in $nodes){Get-WinEvent -ComputerName $node -FilterHashtable @{LogName='System';ID = 1167} -ErrorAction SilentlyContinue}
          $eventsdegraded = $eventsdegraded | sort timecreated -Descending
 
          $clustergroups = $clu | Get-ClusterGroup
